@@ -1,0 +1,164 @@
+---
+title: "Lab7"
+author: "Isabela Vieira"
+date: "11/9/2020"
+output: github_document
+---
+
+Main question to answer: What factors make an adult more likely to have health insurance?
+
+```{r} 
+#Load dataset:
+load("~/Documents/College/Fall 2020/Econometrics/NHIS_2014/NHIS_2014.RData")
+#Attach the new dataset from NHIS:
+attach(data_use1)
+```
+
+Now, First, let's define the population I want to use. I think it would be nice to start with a population from a specific geography because the healthcare marketplace varies according to state and healthcare availability/pricing may influence a lot the likeability of a person having insurance or not. The dataset doesn't contain info about state, so we will use the region to account for the impact of geographic location. Since we are answering the question for adults, we will be restricting the dataset to people above 25. As a foreigner, I was unisured for the first 3 years in NY, just because I found the search for healthcare too complicated and didn't want to go throught the whole process. Citzenship status is something that might affect a person's likeability to have insurance, especially if there are language constraints, and that only affects a considerably small portion of the population (foreigners), so I thought of maybe excluding that because those cases are exceptions of the norm.  
+
+```{r}
+use_varb <- (AGE_P >= 25) & (REGION == "Northeast") & (borninUSA == 1) 
+
+dat_use <- subset(data_use1,use_varb)
+detach(data_use1)
+attach(dat_use)
+```
+
+Re-code the personal earnings variable (I did some personal re-coding as well bc later code was not running)
+```{r}
+dat_use$earn_lastyr <- as.factor(dat_use$ERNYR_P)
+levels(dat_use$earn_lastyr) <- c("0","$01-$4999","$5000-$9999","$10000-$14999","$15000-$19999","$20000-$24999","$25000-$34999","$35000-$44999","$45000-$54999","$55000-$64999","$65000-$74999","$75000-84999","$85000-94999","$95000 and over","NA")
+dat_use$earn_lastyr[(is.na(dat_use$earn_lastyr)==TRUE)]<-"NA" #This line fixed it 
+```
+
+I think we can re-code the education variables so we have all as ordered factors:
+```{r}
+education_f <- factor((educ_nohs + 2*educ_hs + 3*educ_smcoll + 4*educ_as + 5*educ_bach + 6*educ_adv), levels=c(1,2,3,4,5,6),labels = c("No High School","High School","Some College","Associates Deg","Bachelors Deg","Advanced Deg"))
+```
+
+Run a logit regression. I want to ignore race for now and focus on variables that I think that have a greater correlation to our dependent variable "not covered". I'm inclined to assume that age, work force status (lot's off people are insured by their employers, so we might watch out for retired people or people who gave up looking for a job), veteran status (that might be related to disabilities, or simply the fact that insurance companies may see them as being unstable and therefore riskier in comparison to other groups - let's see if this assumption is correct), the person's health status is deff a big one, and let's see if education and gender has anything to do with it just out of curiosity:
+```{r}
+model_logit1 <- glm(NOTCOV ~ AGE_P + I(AGE_P^2) + female + education_f + veteran_stat + inworkforce + disabl_limit + person_healthstatus, family = binomial, data = dat_use)
+
+require(stargazer)
+stargazer(model_logit1, type = "text")
+```
+
+Ok this is weird and confusing. How come there isn't a statistically significant relationship between the variables disabl_limit and person_healthstatus - Poor. Even more weird, how come educational variables have statistically significant relationships when those variables related to health have not? I don't know if there is something wrong here, or if everything I have ever heard about healthcare was wrong. Ok maybe, it can be, that people with disabilities and poor health status are more afraid of paying for the price of healthcare so they simply do not take the risk of being unisured. That could account for what we see above, but I would not have guessed that.  
+
+"Some of the estimation procedures are not as tolerant about factors so we need to set those as dummies. Some are also intolerant of NA values. I’ll show the code for the basic set of explanatory variables, which you can modify as you see fit.
+```{r}
+d_health_stats <- data.frame(model.matrix(~ dat_use$person_healthstatus))
+d_earnlastyr <- data.frame(model.matrix(~ factor(dat_use$earn_lastyr)))  # snips any with zero in the subgroup
+dat_for_analysis_sub <- data.frame(
+  dat_use$NOTCOV,
+  dat_use$AGE_P,
+  dat_use$female,
+  dat_use$AfAm,
+  dat_use$Asian,
+  dat_use$RaceOther,
+  dat_use$Hispanic,
+  dat_use$educ_hs,
+  dat_use$educ_smcoll,
+  dat_use$educ_as,
+  dat_use$educ_bach,
+  dat_use$educ_adv,
+  dat_use$married,
+  dat_use$widowed,
+  dat_use$divorc_sep,
+  dat_use$veteran_stat,#Added
+  dat_use$inworkforce,#Added
+  dat_use$disabl_limit,#Added
+  d_health_stats[,2:8],
+  d_earnlastyr[,2:12]) # need [] since model.matrix includes intercept term
+
+names(dat_for_analysis_sub) <- c("NOTCOV",
+                                 "Age",
+                                 "female",
+                                 "AfAm",
+                                 "Asian",
+                                 "RaceOther",
+                                 "Hispanic",
+                                 "educ_hs",
+                                 "educ_smcoll",
+                                 "educ_as",
+                                 "educ_bach",
+                                 "educ_adv",
+                                 "married",
+                                 "widowed",
+                                 "divorc_sep",
+                                 "Region.Midwest",
+                                 "Region.South",
+                                 "Region.West",
+                                 "born.Mex.CentAm.Carib",
+                                 "born.S.Am",
+                                 "born.Eur",
+                                 "born.f.USSR",
+                                 "born.Africa",
+                                 "born.MidE",
+                                 "born.India.subc",
+                                 "born.Asia",
+                                 "born.SE.Asia",
+                                 "born.elsewhere",
+                                 "born.unknown",
+                                 "veteran_stat",
+                                 "in the workforce")
+```
+
+"Next create a common data object that is standardized (check what it does! run summary(sobj$data) ) and split into training and test sets. I have to use a very small training set to prevent my little laptop from running out of memory, *I'll leave like that bc that's also true for me*. You can try a bigger value like max=0.75 or similar *No thanks*. Summary(restrict_1) will tell you how many are in the training set vs test."
+
+```{r}
+require("standardize")
+set.seed(654321)
+NN <- length(dat_for_analysis_sub$NOTCOV)
+restrict_1 <- as.logical(round(runif(NN,min=0,max=0.6))) # use fraction as training data
+summary(restrict_1)
+dat_train <- subset(dat_for_analysis_sub, !restrict_1) #My trained data
+dat_test <- subset(dat_for_analysis_sub, restrict_1) #My test data
+sobj <- standardize(NOTCOV ~ female + veteran_stat + inworkforce + person_healthstatus, family = binomial, data = dat_use)
+
+s_dat_test <- predict(sobj, dat_test)
+#I don't know whats up with this output, but I'll trust it's ok
+```
+
+```{r}
+# LPM
+model_lpm1 <- lm(sobj$formula, data = sobj$data)
+summary(model_lpm1)
+pred_vals_lpm <- predict(model_lpm1, s_dat_test)
+pred_model_lpm1 <- (pred_vals_lpm > 0.5)
+table(pred = pred_model_lpm1, true = dat_test$NOTCOV)
+# logit 
+model_logit2 <- glm(sobj$formula, family = binomial, data = sobj$data)
+summary(model_logit2)
+pred_vals <- predict(model_logit2, s_dat_test, type = "response")
+pred_model_logit2 <- (pred_vals > 0.5)
+table(pred = pred_model_logit2, true = dat_test$NOTCOV)
+```
+#I don't really know what's going on here, but got some general info about this fisher thing on the internet: "Fisher Scoring Iterations. This is the number of iterations to fit the model. The logistic regression uses an iterative maximum likelihood algorithm to fit the data. The Fisher method is the same as fitting a model by iteratively re-weighting the least squares. It indicates the optimal number of iterations. For example, beyond some number of iterations there are no practical gains. You can think of this as being analogous to the determination of the maximum number of nodes in Decision Trees. For more information, see Building a Decision Tree Model."
+
+The next line of code took so long to run that I was afraid my computer was going to die. The random forest code is used here to do some classification.  
+```{r}
+require('randomForest')
+set.seed(54321)
+model_randFor <- randomForest(as.factor(NOTCOV) ~ ., data = sobj$data, importance=TRUE, proximity=TRUE)
+print(model_randFor)
+round(importance(model_randFor),2)
+varImpPlot(model_randFor)
+# look at confusion matrix for this too
+pred_model1 <- predict(model_randFor,  s_dat_test)
+table(pred = pred_model1, true = dat_test$NOTCOV)
+```
+
+```{r}
+require(e1071)
+# tuned_parameters <- tune.svm(as.factor(NOTCOV) ~ ., data = sobj$data, gamma = 10^(-3:0), cost = 10^(-2:1)) 
+# summary(tuned_parameters)
+# figure best parameters and input into next
+svm.model <- svm(as.factor(NOTCOV) ~ ., data = sobj$data, cost = 10, gamma = 0.1)
+svm.pred <- predict(svm.model, s_dat_test)
+table(pred = svm.pred, true = dat_test$NOTCOV)
+```
+
+So, I got a terrible error with glmnet that I could not figure out so I just left that part out of my hw because I'm lost enought to not even try again. Error was: "NAs introduced by coercionError in elnet(x, is.sparse, ix, jx, y, weights, offset, type.gaussian, :NA/NaN/Inf in foreign function call (arg 5)"
+
